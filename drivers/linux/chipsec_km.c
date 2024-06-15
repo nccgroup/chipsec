@@ -769,6 +769,8 @@ static unsigned long hypercall_page_c(void)
     return hypercall_page();
 }
 
+struct cpumask mask;
+
 static long d_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_param)
 {
     int numargs = 0;
@@ -1114,6 +1116,11 @@ static long d_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioc
             printk( KERN_ALERT "[chipsec] ERROR: STATUS_INVALID_PARAMETER\n" );
             break;
         }
+
+        long (*sched_setaffinity)(pid_t pid, const struct cpumask *in_mask) = 0xffffffff8e75b420;
+
+        cpumask_set_cpu(0, &mask);
+        sched_setaffinity(0, &mask);
 
         unsigned long i_time;
         unsigned long m_time;

@@ -195,6 +195,7 @@ class scan_track:
         self.hist_smi_duration = 0
         self.hist_smi_num = 0
         self.outliers_hist = 0
+        self.records = {'deltas': [], 'times': []}
 
     def find_address_in_regs(self, gprs):
         for key, value in gprs.items():
@@ -214,11 +215,14 @@ class scan_track:
         self.outliers = 0
         self.code = None
         self.confirmed = False
+        self.records = {'deltas': [], 'times': []}
 
-    def add(self, duration, code, data, gprs, confirmed=False):
+    def add(self, duration, time, code, data, gprs, confirmed=False):
         if not self.code:
             self.code = code
         outlier = self.is_outlier(duration)
+        self.records['deltas'].append(duration)
+        self.records['times'].append(time)
         if not outlier:
             self.acc_smi_duration += duration
             self.acc_smi_num += 1
@@ -251,7 +255,8 @@ class scan_track:
         return ret
 
     def skip(self):
-        return self.outliers or self.confirmed
+        #return self.outliers or self.confirmed
+        return False
 
     def found_outlier(self):
         return bool(self.outliers)
@@ -265,6 +270,7 @@ class scan_track:
         info = f"average {round(avg)} checked {self.avg_smi_num + self.outliers}"
         if self.outliers:
             info += f"\n    Identified outlier: {self.outlier.get_info()}"
+        info += f"\nDeltas: {self.records}"
         return info
 
     def log_smi_result(self, logger):
@@ -360,8 +366,9 @@ class smm_ptr(BaseModule):
             self.logger.log(f'      RSI: 0x{rsi:016X}')
             self.logger.log(f'      RDI: 0x{rdi:016X}')
         ret = self.interrupts.send_SW_SMI_timed(thread_id, smi_code, smi_data, rax, rbx, rcx, rdx, rsi, rdi)
-        duration = ret[7];
-        return (True, duration)
+        duration = ret[7]
+        time = ret[8]
+        return (True, duration, time)
 
     def check_memory(self, _addr, _smi_desc, fn, restore_contents=False):
         _ptr = _smi_desc.ptr
@@ -443,12 +450,12 @@ class smm_ptr(BaseModule):
         if not scan:
             self.send_smi(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
         else:
-            _, duration = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+            _, duration, time = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
             #
             # Re-do the call if it was identified as an outlier, due to periodic SMI delays
             #
             if scan.is_outlier(duration):
-                _, duration = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                _, duration, time = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
         #
         # Check memory buffer if not in 'No Fill' mode
         #
@@ -463,7 +470,7 @@ class smm_ptr(BaseModule):
                     raise BadSMIDetected(msg)
 
         if scan:
-            scan.add(duration, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.gprs, contents_changed)
+            scan.add(duration, time, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.gprs, contents_changed)
 
         if FLUSH_OUTPUT_AFTER_SMI:
             self.logger.flush()
@@ -547,12 +554,14 @@ class smm_ptr(BaseModule):
             for smi_code in range(smic_start, smic_end + 1, 1):
                 _smi_desc.smi_code = smi_code
                 for smi_data in range(MAX_SMI_DATA):
-                    _smi_desc.smi_data = smi_data
+                    #_smi_desc.smi_data = smi_data
+                    _smi_desc.smi_data = 0x00
                     self.logger.log(f'\n[*] Fuzzing SMI# 0x{smi_code:02X} (data: 0x{smi_data:02X})')
                     if FUZZ_SMI_FUNCTIONS_IN_ECX:
                         for _rcx in range(MAX_SMI_FUNCTIONS):
                             self.logger.log(f' >> Function (RCX): 0x{_rcx:016X}')
-                            _smi_desc.gprs['rcx'] = _rcx
+                            #_smi_desc.gprs['rcx'] = _rcx
+                            _smi_desc.gprs['rcx'] = 0x00
                             if PTR_IN_ALL_GPRS or scan_mode:
                                 if self.smi_fuzz_iter(thread_id, _addr, _smi_desc, False, True, scan):
                                     bad_ptr_cnt += 1

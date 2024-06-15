@@ -441,7 +441,9 @@ __swsmi__:
 __swsmi_timed__:
     mov  r10, rdi
     push r12 ; callee-saved register
+    push r13 ; callee-saved register
     mov  r12, rsi
+    mov  r13, rdx
 
     ; setting up GPR (arguments) to SMI handler call
     ; notes:
@@ -485,6 +487,7 @@ __swsmi_timed__:
     or rax, rdx
     sub rax, r8
     mov [r12], rax
+    mov [r13], r8
     mov rax, r9
     mov rdx, r11
 
@@ -496,6 +499,7 @@ __swsmi_timed__:
     xchg rsi, [r10+028h] ; rsi_value
     xchg rdi, [r10+030h] ; rdi_value
 
+    pop r13
     pop r12
     ret
 

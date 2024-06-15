@@ -35,6 +35,7 @@ chipsec@intel.com
 #include <asm/io.h>
 #include <linux/smp.h>
 #include <linux/miscdevice.h>
+#include <linux/cpumask.h>
 
 #include "include/chipsec.h"
 
@@ -117,7 +118,7 @@ typedef struct tagSMI_CONTEXT {
 typedef SMI_CONTEXT SMI_CTX, *PSMI_CTX; 
 
  void __swsmi__(SMI_CTX * ctx); 
- void __swsmi_timed__(SMI_CTX * ctx, unsigned long * time);
+ void __swsmi_timed__(SMI_CTX * ctx, unsigned long * time, unsigned long * i_time);
 
   void _rdmsr( 
     unsigned long msr_num, // rdi
@@ -1114,13 +1115,15 @@ static long d_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioc
             break;
         }
 
+        unsigned long i_time;
         unsigned long m_time;
         preempt_disable();
-        __swsmi_timed__((SMI_CTX *)ptr, &m_time);
+        __swsmi_timed__((SMI_CTX *)ptr, &m_time, &i_time);
         preempt_enable();
         ptrbuf[numargs] = m_time;
+        ptrbuf[numargs + 1] = i_time;
 
-        if(copy_to_user((void*)ioctl_param, (void*)ptrbuf, (sizeof(long) * (numargs + 1))) > 0)
+        if(copy_to_user((void*)ioctl_param, (void*)ptrbuf, (sizeof(long) * (numargs + 2))) > 0)
             return -EFAULT;
         break;
 #else

@@ -622,9 +622,9 @@ class LinuxHelper(Helper):
 
     def send_sw_smi_timed(self, cpu_thread_id: int, SMI_code_data: int, _rax: int, _rbx: int, _rcx: int, _rdx: int, _rsi: int, _rdi: int) -> Optional[Tuple[int, int, int, int, int, int, int]]:
         self.set_affinity(cpu_thread_id)
-        in_buf = struct.pack(f'8{self._pack}', SMI_code_data, _rax, _rbx, _rcx, _rdx, _rsi, _rdi, 0)
+        in_buf = struct.pack(f'9{self._pack}', SMI_code_data, _rax, _rbx, _rcx, _rdx, _rsi, _rdi, 0, 0)
         out_buf = self.ioctl(IOCTL_SWSMI_TIMED, in_buf)
-        ret = struct.unpack(f'8{self._pack}', out_buf)
+        ret = struct.unpack(f'9{self._pack}', out_buf)
         return ret
 
     #

@@ -282,8 +282,8 @@ class scan_track:
         return ret
 
     def skip(self):
-        #return self.outliers or self.confirmed
-        return False
+        return self.outliers or self.confirmed
+        #return False
 
     def found_outlier(self):
         return bool(self.outliers)
@@ -589,14 +589,14 @@ class smm_ptr(BaseModule):
             for smi_code in range(smic_start, smic_end + 1, 1):
                 _smi_desc.smi_code = smi_code
                 for smi_data in range(MAX_SMI_DATA):
-                    #_smi_desc.smi_data = smi_data
-                    _smi_desc.smi_data = 0x00
+                    _smi_desc.smi_data = smi_data
+                    #_smi_desc.smi_data = 0x00
                     self.logger.log(f'\n[*] Fuzzing SMI# 0x{smi_code:02X} (data: 0x{smi_data:02X})')
                     if FUZZ_SMI_FUNCTIONS_IN_ECX:
                         for _rcx in range(MAX_SMI_FUNCTIONS):
                             self.logger.log(f' >> Function (RCX): 0x{_rcx:016X}')
-                            #_smi_desc.gprs['rcx'] = _rcx
-                            _smi_desc.gprs['rcx'] = 0x00
+                            _smi_desc.gprs['rcx'] = _rcx
+                            #_smi_desc.gprs['rcx'] = 0x00
                             if PTR_IN_ALL_GPRS or scan_mode:
                                 if self.smi_fuzz_iter(thread_id, _addr, _smi_desc, False, True, scan):
                                     bad_ptr_cnt += 1

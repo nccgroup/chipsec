@@ -79,8 +79,10 @@ Examples:
 
 """
 
-import struct
 import os
+import struct
+import sys
+import time
 
 from chipsec.module_common import BaseModule
 from chipsec.library.returncode import ModuleResult
@@ -146,6 +148,12 @@ GPR_2ADDR = False
 # be long-running
 OUTLIER_THRESHOLD = 33.3
 
+# Scan mode delay before SMI calls
+SCAN_MODE_DELAY = 0
+
+# MSR numbers
+MSR_SMI_COUNT = 0x00000034
+
 #
 # Defaults
 #
@@ -196,6 +204,25 @@ class scan_track:
         self.hist_smi_num = 0
         self.outliers_hist = 0
         self.records = {'deltas': [], 'times': []}
+        self.msr_count = self.get_msr_count()
+
+    def get_msr_count(self):
+        cpu = 0
+        fd = os.open(f"/dev/cpu/{cpu}/msr", os.O_RDONLY)
+        os.lseek(fd, MSR_SMI_COUNT, os.SEEK_SET)
+        count = struct.unpack('Q', os.read(fd, 8))[0]
+        os.close(fd)
+        return count
+
+    def check_inc_msr(self):
+        valid = False
+        count = self.get_msr_count()
+        if (count == self.msr_count + 1):
+            valid = True
+        self.msr_count = count
+        if not valid:
+            print("SMI contention detected", file=sys.stderr)
+        return valid
 
     def find_address_in_regs(self, gprs):
         for key, value in gprs.items():
@@ -205,9 +232,9 @@ class scan_track:
                 return key
 
     def clear(self):
-        self.max = smi_info(0);
-        self.min = smi_info(2**32-1);
-        self.outlier = smi_info(0);
+        self.max = smi_info(0)
+        self.min = smi_info(2**32-1)
+        self.outlier = smi_info(0)
         self.acc_smi_duration = 0
         self.acc_smi_num = 0
         self.avg_smi_duration = 0
@@ -223,9 +250,9 @@ class scan_track:
         outlier = self.is_outlier(duration)
         self.records['deltas'].append(duration)
         self.records['times'].append(time)
+        self.acc_smi_duration += duration
+        self.acc_smi_num += 1
         if not outlier:
-            self.acc_smi_duration += duration
-            self.acc_smi_num += 1
             if duration > self.max.duration:
                 self.max.update(duration, code, data, gprs.copy())
             elif duration < self.min.duration:
@@ -450,12 +477,20 @@ class smm_ptr(BaseModule):
         if not scan:
             self.send_smi(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
         else:
-            _, duration, time = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+            while True:
+                time.sleep(SCAN_MODE_DELAY)
+                _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                if scan.check_inc_msr():
+                    break
             #
             # Re-do the call if it was identified as an outlier, due to periodic SMI delays
             #
             if scan.is_outlier(duration):
-                _, duration, time = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                while True:
+                    time.sleep(SCAN_MODE_DELAY)
+                    _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                    if scan.check_inc_msr():
+                        break
         #
         # Check memory buffer if not in 'No Fill' mode
         #
@@ -470,7 +505,7 @@ class smm_ptr(BaseModule):
                     raise BadSMIDetected(msg)
 
         if scan:
-            scan.add(duration, time, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.gprs, contents_changed)
+            scan.add(duration, start, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.gprs, contents_changed)
 
         if FLUSH_OUTPUT_AFTER_SMI:
             self.logger.flush()

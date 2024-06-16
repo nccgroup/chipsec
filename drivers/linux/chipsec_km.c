@@ -119,6 +119,7 @@ typedef SMI_CONTEXT SMI_CTX, *PSMI_CTX;
 
  void __swsmi__(SMI_CTX * ctx); 
  void __swsmi_timed__(SMI_CTX * ctx, unsigned long * time, unsigned long * i_time);
+ void __swsmi_timed_test__(SMI_CTX * ctx, unsigned long * time, unsigned long * i_time);
 
   void _rdmsr( 
     unsigned long msr_num, // rdi
@@ -1117,18 +1118,23 @@ static long d_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioc
             break;
         }
 
-        long (*sched_setaffinity)(pid_t pid, const struct cpumask *in_mask) = 0xffffffff8e75b420;
+        //long (*sched_setaffinity)(pid_t pid, const struct cpumask *in_mask) = 0xffffffff8e75b420;
 
-        cpumask_set_cpu(0, &mask);
-        sched_setaffinity(0, &mask);
+        //cpumask_set_cpu(0, &mask);
+        //sched_setaffinity(0, &mask);
 
         unsigned long i_time;
         unsigned long m_time;
         preempt_disable();
         __swsmi_timed__((SMI_CTX *)ptr, &m_time, &i_time);
+        //__swsmi_timed_test__((SMI_CTX *)ptr, &m_time, &i_time);
         preempt_enable();
         ptrbuf[numargs] = m_time;
         ptrbuf[numargs + 1] = i_time;
+
+		//printk( KERN_ALERT "time %d\n", m_time);
+        //cpumask_copy(&mask, cpu_all_mask);
+        //sched_setaffinity(0, &mask);
 
         if(copy_to_user((void*)ioctl_param, (void*)ptrbuf, (sizeof(long) * (numargs + 2))) > 0)
             return -EFAULT;

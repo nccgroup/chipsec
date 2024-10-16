@@ -442,6 +442,7 @@ __swsmi_timed__:
     mov  r10, rdi
     push r12 ; callee-saved register
     push r13 ; callee-saved register
+;    push r14 ; callee-saved register
     mov  r12, rsi
     mov  r13, rdx
 
@@ -465,23 +466,32 @@ __swsmi_timed__:
     ror ax, 8
     out 0B3h, al
 
+    wbinvd
+    mfence
+;    mov r14, 0x1000
+;warmup_loop:
+;    add eax, 0
+;    dec r14
+;    jnz warmup_loop
     ; read time-stamp counter
     mov r9, rax
     mov r11, rdx
+;   lfence
     rdtsc
     shl rdx, 32
     or rax, rdx
     mov r8, rax
     mov rax, r9
     mov rdx, r11
-
     ; trigger SMI
     ror ax, 8
     out 0B2h, al
 
     ; measure SMI execution time
+;   wbinvd
     mov r9, rax
     mov r11, rdx
+;   lfence
     rdtsc
     shl rdx, 32
     or rax, rdx
@@ -499,6 +509,7 @@ __swsmi_timed__:
     xchg rsi, [r10+028h] ; rsi_value
     xchg rdi, [r10+030h] ; rdi_value
 
+;   pop r14
     pop r13
     pop r12
     ret

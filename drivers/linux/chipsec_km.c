@@ -1125,9 +1125,12 @@ static long d_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioc
 
         unsigned long i_time;
         unsigned long m_time;
+        unsigned long flags;
         preempt_disable();
+        local_irq_save(flags);
         __swsmi_timed__((SMI_CTX *)ptr, &m_time, &i_time);
         //__swsmi_timed_test__((SMI_CTX *)ptr, &m_time, &i_time);
+        local_irq_restore(flags);
         preempt_enable();
         ptrbuf[numargs] = m_time;
         ptrbuf[numargs + 1] = i_time;

@@ -121,7 +121,7 @@ FUZZ_BAIL_ON_1ST_DETECT = True
 # Fuzz RCX as SMI subfunctions: from 0 to MAX_SMI_FUNCTIONS
 # False - better performance, True - smarter fuzzing
 FUZZ_SMI_FUNCTIONS_IN_ECX = True
-MAX_SMI_FUNCTIONS = 0x10
+MAX_SMI_FUNCTIONS = 0x100
 
 # Max value of the value written to SMI data port (0xB3)
 MAX_SMI_DATA = 0x100
@@ -146,10 +146,10 @@ GPR_2ADDR = False
 
 # Defines the time percentage increase at which the SMI call is considered to
 # be long-running
-OUTLIER_THRESHOLD = 33.3
+OUTLIER_THRESHOLD = 10
 
 # Scan mode delay before SMI calls
-SCAN_MODE_DELAY = 0
+SCAN_MODE_DELAY = 0.01
 
 # MSR numbers
 MSR_SMI_COUNT = 0x00000034
@@ -257,7 +257,7 @@ class scan_track:
                 self.max.update(duration, code, data, gprs.copy())
             elif duration < self.min.duration:
                 self.min.update(duration, code, data, gprs.copy())
-        else:
+        elif self.is_slow_outlier(duration):
             self.outliers += 1
             self.outliers_hist += 1
             self.outlier.update(duration, code, data, gprs.copy())
@@ -272,8 +272,7 @@ class scan_track:
             self.acc_smi_duration = 0
             self.acc_smi_num = 0
 
-    def is_outlier(self, value):
-        self.avg()
+    def is_slow_outlier(self, value):
         ret = False
         if self.avg_smi_duration and value > self.avg_smi_duration * (1 + OUTLIER_THRESHOLD / 100):
             ret = True
@@ -281,9 +280,26 @@ class scan_track:
             ret = True
         return ret
 
+    def is_fast_outlier(self, value):
+        ret = False
+        if self.avg_smi_duration and value < self.avg_smi_duration * (1 - OUTLIER_THRESHOLD / 100):
+            ret = True
+        if self.hist_smi_duration and value < self.hist_smi_duration * (1 - OUTLIER_THRESHOLD / 100):
+            ret = True
+        return ret
+
+    def is_outlier(self, value):
+        self.avg()
+        ret = False
+        if self.is_slow_outlier(value):
+            ret = True
+        if self.is_fast_outlier(value):
+            ret = True
+        return ret
+
     def skip(self):
-        return self.outliers or self.confirmed
-        #return False
+        #return self.outliers or self.confirmed
+        return False
 
     def found_outlier(self):
         return bool(self.outliers)
@@ -478,7 +494,7 @@ class smm_ptr(BaseModule):
             self.send_smi(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
         else:
             while True:
-                time.sleep(SCAN_MODE_DELAY)
+                #time.sleep(SCAN_MODE_DELAY)
                 _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
                 if scan.check_inc_msr():
                     break
@@ -487,8 +503,10 @@ class smm_ptr(BaseModule):
             #
             if scan.is_outlier(duration):
                 while True:
+                    #print("Retrying...")
                     time.sleep(SCAN_MODE_DELAY)
                     _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                    #print(duration)
                     if scan.check_inc_msr():
                         break
         #
@@ -589,14 +607,14 @@ class smm_ptr(BaseModule):
             for smi_code in range(smic_start, smic_end + 1, 1):
                 _smi_desc.smi_code = smi_code
                 for smi_data in range(MAX_SMI_DATA):
-                    _smi_desc.smi_data = smi_data
-                    #_smi_desc.smi_data = 0x00
+                    #_smi_desc.smi_data = smi_data
+                    _smi_desc.smi_data = 0x00
                     self.logger.log(f'\n[*] Fuzzing SMI# 0x{smi_code:02X} (data: 0x{smi_data:02X})')
                     if FUZZ_SMI_FUNCTIONS_IN_ECX:
                         for _rcx in range(MAX_SMI_FUNCTIONS):
                             self.logger.log(f' >> Function (RCX): 0x{_rcx:016X}')
-                            _smi_desc.gprs['rcx'] = _rcx
-                            #_smi_desc.gprs['rcx'] = 0x00
+                            #_smi_desc.gprs['rcx'] = _rcx
+                            _smi_desc.gprs['rcx'] = 0x00
                             if PTR_IN_ALL_GPRS or scan_mode:
                                 if self.smi_fuzz_iter(thread_id, _addr, _smi_desc, False, True, scan):
                                     bad_ptr_cnt += 1

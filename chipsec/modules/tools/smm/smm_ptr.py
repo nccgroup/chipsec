@@ -83,6 +83,7 @@ import os
 import struct
 import sys
 import time
+import math
 
 from chipsec.module_common import BaseModule
 from chipsec.library.returncode import ModuleResult
@@ -124,7 +125,7 @@ FUZZ_SMI_FUNCTIONS_IN_ECX = True
 MAX_SMI_FUNCTIONS = 0x100
 
 # Max value of the value written to SMI data port (0xB3)
-MAX_SMI_DATA = 0x100
+MAX_SMI_DATA = 0x10
 
 # Pass the pointer to SMI handlers in all general-purpose registers
 # rather than in one register
@@ -147,6 +148,8 @@ GPR_2ADDR = False
 # Defines the time percentage increase at which the SMI call is considered to
 # be long-running
 OUTLIER_THRESHOLD = 10
+OUTLIER_STD_DEV = 2
+SCAN_CALIB_SAMPLES = 50
 
 # Scan mode delay before SMI calls
 SCAN_MODE_DELAY = 0.01
@@ -205,6 +208,13 @@ class scan_track:
         self.outliers_hist = 0
         self.records = {'deltas': [], 'times': []}
         self.msr_count = self.get_msr_count()
+        self.stdev = 0
+        self.stdev_hist = 0
+        self.m2 = 0
+        self.m2_hist = 0
+        self.needs_calibration = True
+        self.calib_samples = 0
+        self.first_measurement = True
 
     def get_msr_count(self):
         cpu = 0
@@ -213,6 +223,12 @@ class scan_track:
         count = struct.unpack('Q', os.read(fd, 8))[0]
         os.close(fd)
         return count
+
+    def is_first_measurement(self):
+        is_first = self.first_measurement
+        if self.first_measurement:
+            self.first_measurement = False
+        return is_first
 
     def check_inc_msr(self):
         valid = False
@@ -243,6 +259,11 @@ class scan_track:
         self.code = None
         self.confirmed = False
         self.records = {'deltas': [], 'times': []}
+        self.stdev = 0
+        self.m2 = 0
+        self.needs_calibration = True
+        self.calib_samples = 0
+        self.first_measurement = True
 
     def add(self, duration, time, code, data, gprs, confirmed=False):
         if not self.code:
@@ -252,6 +273,7 @@ class scan_track:
         self.records['times'].append(time)
         self.acc_smi_duration += duration
         self.acc_smi_num += 1
+        self.update_stdev(duration)
         if not outlier:
             if duration > self.max.duration:
                 self.max.update(duration, code, data, gprs.copy())
@@ -272,24 +294,47 @@ class scan_track:
             self.acc_smi_duration = 0
             self.acc_smi_num = 0
 
+    def update_stdev(self, value):
+        difference = value - self.avg_smi_duration
+        difference_hist = value - self.hist_smi_duration
+        self.avg()
+        self.m2 += difference * (value - self.avg_smi_duration)
+        self.m2_hist += difference_hist * (value - self.hist_smi_duration)
+        variance = self.m2 / self.avg_smi_num
+        variance_hist = self.m2_hist / self.hist_smi_num
+        self.stdev = math.sqrt(variance)
+        self.stdev_hist = math.sqrt(variance_hist)
+
+    def update_calibration(self, duration):
+        if not self.needs_calibration:
+            return
+        self.acc_smi_duration += duration
+        self.acc_smi_num += 1
+        self.update_stdev(duration)
+        self.calib_samples += 1
+        if self.calib_samples >= SCAN_CALIB_SAMPLES:
+            self.needs_calibration = False
+            print(f"Calibration done. stdev: {self.stdev}, mean: {self.avg_smi_duration}, samples: {self.calib_samples}")
+
     def is_slow_outlier(self, value):
         ret = False
-        if self.avg_smi_duration and value > self.avg_smi_duration * (1 + OUTLIER_THRESHOLD / 100):
+        if value > self.avg_smi_duration + OUTLIER_STD_DEV * self.stdev:
             ret = True
-        if self.hist_smi_duration and value > self.hist_smi_duration * (1 + OUTLIER_THRESHOLD / 100):
+        if value > self.hist_smi_duration + OUTLIER_STD_DEV * self.stdev_hist:
             ret = True
         return ret
 
     def is_fast_outlier(self, value):
         ret = False
-        if self.avg_smi_duration and value < self.avg_smi_duration * (1 - OUTLIER_THRESHOLD / 100):
+        if value < self.avg_smi_duration - OUTLIER_STD_DEV * self.stdev:
             ret = True
-        if self.hist_smi_duration and value < self.hist_smi_duration * (1 - OUTLIER_THRESHOLD / 100):
+        if value < self.hist_smi_duration - OUTLIER_STD_DEV * self.stdev_hist:
             ret = True
         return ret
 
     def is_outlier(self, value):
-        self.avg()
+        if self.needs_calibration:
+            return False
         ret = False
         if self.is_slow_outlier(value):
             ret = True
@@ -308,7 +353,6 @@ class scan_track:
         return self.outliers_hist
 
     def get_info(self):
-        self.avg()
         avg = self.avg_smi_duration or self.hist_smi_duration
         info = f"average {round(avg)} checked {self.avg_smi_num + self.outliers}"
         if self.outliers:
@@ -496,7 +540,14 @@ class smm_ptr(BaseModule):
             while True:
                 #time.sleep(SCAN_MODE_DELAY)
                 _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
-                if scan.check_inc_msr():
+                #if scan.is_first_measurement():
+                #    continue
+                if not scan.check_inc_msr():
+                    continue
+                if scan.needs_calibration:
+                    scan.update_calibration(duration)
+                    continue
+                else:
                     break
             #
             # Re-do the call if it was identified as an outlier, due to periodic SMI delays
@@ -506,6 +557,8 @@ class smm_ptr(BaseModule):
                     #print("Retrying...")
                     time.sleep(SCAN_MODE_DELAY)
                     _, duration, start = self.send_smi_timed(thread_id, _smi_desc.smi_code, _smi_desc.smi_data, _smi_desc.name, _smi_desc.desc, _rax, _rbx, _rcx, _rdx, _rsi, _rdi)
+                    if scan.is_outlier(duration):
+                        print(f"Found outlier. Duration: {duration}, start: {start}")
                     #print(duration)
                     if scan.check_inc_msr():
                         break
